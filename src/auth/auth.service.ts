@@ -19,7 +19,7 @@ export class AuthService {
       service: 'gmail',
       auth: {
         user: 'agritrack.system.mail@gmail.com', 
-        pass: 'zqhr fqws jlab dpiw',
+        pass: 'zqhrfqwsjlabdpiw',
       },
     });
   }
