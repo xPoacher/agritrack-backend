@@ -15,41 +15,49 @@ export class AuthService {
     private buyerRepo: Repository<Buyer>,
     private jwtService: JwtService,
   ) {
-    // Configure standard Gmail SMTP for sending verification codes
     this.transporter = nodemailer.createTransport({
       service: 'gmail',
       auth: {
-        user: 'YOUR_EMAIL@gmail.com', // Replace with your project email
-        pass: 'YOUR_GMAIL_APP_PASSWORD', // Generate an App Password in your Google Account settings
+        user: 'agritrack.system.mail@gmail.com', 
+        pass: 'zqhr fqws jlab dpiw',
       },
     });
   }
 
-  // Notice the addition of companyName here
   async register(email: string, pass: string, companyName: string) {
     const existing = await this.buyerRepo.findOne({ where: { email } });
     if (existing) throw new BadRequestException('Email already registered');
 
     const hashedPassword = await bcrypt.hash(pass, 10);
-    const verificationCode = Math.floor(100000 + Math.random() * 900000).toString(); // 6-digit code
+    const verificationCode = Math.floor(100000 + Math.random() * 900000).toString(); 
 
     const buyer = this.buyerRepo.create({
       email,
       password: hashedPassword,
-      companyName, // Save the company name to the database
+      companyName,
       verificationCode,
     });
     await this.buyerRepo.save(buyer);
 
-    // Send the email
-    await this.transporter.sendMail({
-      from: '"AgriTrack System" <noreply@agritrack.co.ke>',
-      to: email,
-      subject: 'Verify your AgriTrack Buyer Account',
-      text: `Your verification code is: ${verificationCode}`,
-    });
+    // CRITICAL: Print code to Render logs so you can test without emails working
+    console.log(`\n\n======================================================`);
+    console.log(`=== VERIFICATION CODE FOR ${email}: ${verificationCode} ===`);
+    console.log(`======================================================\n\n`);
 
-    return { message: 'Verification code sent to email' };
+    try {
+      await this.transporter.sendMail({
+        from: '"AgriTrack System" <noreply@agritrack.co.ke>',
+        to: email,
+        subject: 'Verify your AgriTrack Buyer Account',
+        text: `Your verification code is: ${verificationCode}`,
+      });
+    } catch (error) {
+      // Cast the unknown error to standard Error type to safely read the message
+      const emailError = error as Error;
+      console.error('Email failed to send (check Gmail App Password), but registration succeeded:', emailError.message);
+    }
+
+    return { message: 'Verification code generated successfully' };
   }
 
   async verify(email: string, code: string) {
@@ -59,7 +67,7 @@ export class AuthService {
     }
 
     buyer.isVerified = true;
-    buyer.verificationCode = ''; // Clear code after use
+    buyer.verificationCode = ''; 
     await this.buyerRepo.save(buyer);
     return { message: 'Account verified successfully' };
   }
@@ -74,7 +82,6 @@ export class AuthService {
       throw new UnauthorizedException('Please verify your email first');
     }
 
-    // Embed the buyer's email and company name in the token payload
     const payload = { email: buyer.email, sub: buyer.id };
     return { 
       access_token: this.jwtService.sign(payload),
