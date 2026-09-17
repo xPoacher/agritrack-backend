@@ -4,8 +4,6 @@ import { Repository } from 'typeorm';
 import { CropCycle } from '../crop-cycle.entity';
 import { Offer } from './offer.entity';
 
-// Helper function to generate a 16-character WatermelonDB compatible ID
-// This avoids needing to install external packages like nanoid or uuid
 const generateWatermelonId = (): string => {
   const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
   return Array.from({ length: 16 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
@@ -22,25 +20,46 @@ export class SyncController {
   
   @Get('pull')
   async pullChanges(@Query('lastPulledAt') lastPulledAt: string, @Query('farmerId') farmerId: string) {
-    let pendingOffers: Offer[] = [];
+    // FIX: Added explicit ': any[]' types to satisfy TypeScript strict mode
+    let formattedCrops: any[] = [];
+    let formattedOffers: any[] = [];
     
-    // Fetch pending offers only if a farmerId is provided by the mobile app
     if (farmerId) {
+      // 1. Fetch crops and format them exactly how WatermelonDB expects (snake_case)
       const farmerCrops = await this.cropCycleRepo.find({ where: { farmerId } });
-      const cropIds = farmerCrops.map(c => c.id);
+      formattedCrops = farmerCrops.map(c => ({
+        id: c.id,
+        crop_type: c.cropType,
+        expected_yield: c.expectedYield,
+        quantity_available: c.quantityAvailable,
+        location: c.location,
+        harvest_status: c.harvestStatus,
+        date_planted: c.datePlanted,
+        farmer_id: c.farmerId,
+      }));
 
+      const cropIds = farmerCrops.map(c => c.id);
       if (cropIds.length > 0) {
-        pendingOffers = await this.offerRepo.createQueryBuilder("offer")
+        // 2. Fetch offers and format them
+        const allFarmerOffers = await this.offerRepo.createQueryBuilder("offer")
           .where("offer.cropId IN (:...ids)", { ids: cropIds })
-          .andWhere("offer.status = :status", { status: 'Pending' })
           .getMany();
+          
+        formattedOffers = allFarmerOffers.map(o => ({
+          id: o.id,
+          crop_id: o.cropId,
+          buyer_email: o.buyerEmail,
+          company_name: o.companyName,
+          offered_price_per_kg: o.offeredPricePerKg,
+          status: o.status,
+        }));
       }
     }
 
     return {
       changes: { 
-        crop_cycles: { created: [], updated: [], deleted: [] },
-        offers: { created: pendingOffers, updated: [], deleted: [] }
+        crop_cycles: { created: formattedCrops, updated: [], deleted: [] },
+        offers: { created: formattedOffers, updated: [], deleted: [] }
       },
       timestamp: Date.now(),
     };
@@ -67,7 +86,6 @@ export class SyncController {
       }
     }
 
-    // Process status updates to offers (Accepted, Rejected, Counter) pushed from the mobile app
     if (changes && changes.offers) {
       const { updated } = changes.offers;
       for (const updatedOffer of updated) {
@@ -83,10 +101,7 @@ export class SyncController {
 
   @Get('marketplace')
   async getMarketplaceFeed(@Headers('authorization') authHeader: string) {
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      throw new UnauthorizedException('Missing or invalid authorization token');
-    }
-
+    if (!authHeader || !authHeader.startsWith('Bearer ')) return;
     const allCrops = await this.cropCycleRepo.find();
     const allOffers = await this.offerRepo.find();
     
@@ -94,54 +109,52 @@ export class SyncController {
       crop => (crop.quantityAvailable && crop.quantityAvailable > 0) || crop.harvestStatus === 'Planted'
     );
 
-    const marketplaceFeed = activeCrops.map((crop) => {
+    return activeCrops.map((crop) => {
       const allFarmerCrops = allCrops.filter(c => c.farmerId === crop.farmerId);
-      
       const successful = allFarmerCrops.filter(c => c.harvestStatus === 'Harvested').length;
-      const successRate = allFarmerCrops.length > 0 
-        ? Math.round((successful / allFarmerCrops.length) * 100) 
-        : 100;
-
-      const typeOffers = allOffers.filter(o => {
-        const linkedCrop = allCrops.find(c => c.id === o.cropId);
-        return linkedCrop && linkedCrop.cropType === crop.cropType;
-      });
-      
-      const avgPrice = typeOffers.length > 0 
-        ? Math.round(typeOffers.reduce((sum, o) => sum + Number(o.offeredPricePerKg), 0) / typeOffers.length)
-        : null;
-
+      const successRate = allFarmerCrops.length > 0 ? Math.round((successful / allFarmerCrops.length) * 100) : 100;
       const batchOffers = allOffers.filter(o => o.cropId === crop.id);
       const topBid = batchOffers.length > 0 ? Math.max(...batchOffers.map(o => Number(o.offeredPricePerKg))) : null;
 
-      return {
-        ...crop,
-        farmerName: crop.farmerId, 
-        successRate: `${successRate}%`,
-        marketAverage: avgPrice,
-        topBid: topBid
-      };
+      return { ...crop, farmerName: crop.farmerId, successRate: `${successRate}%`, topBid: topBid };
     });
-
-    return marketplaceFeed;
   }
 
   @Post('offer')
   async submitOffer(@Body() body: any, @Headers('authorization') authHeader: string) {
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      throw new UnauthorizedException('Missing or invalid authorization token');
-    }
-
     const newOffer = this.offerRepo.create({
-      id: generateWatermelonId(), // FIX: Explicitly assign the 16-character ID
+      id: generateWatermelonId(),
       cropId: body.cropId,
       buyerEmail: body.buyerEmail,
       companyName: body.companyName,
       offeredPricePerKg: body.price,
       status: 'Pending'
     });
-    
     await this.offerRepo.save(newOffer);
-    return { success: true, message: 'Offer submitted to farmer' };
+    return { success: true };
+  }
+
+  @Post('offer/respond')
+  async respondToCounter(@Body() body: { offerId: string, status: string }, @Headers('authorization') authHeader: string) {
+    await this.offerRepo.update(body.offerId, { status: body.status });
+    return { success: true };
+  }
+
+  @Get('buyer/dashboard')
+  async getBuyerDashboard(@Query('email') email: string, @Headers('authorization') authHeader: string) {
+    if (!email) return []; 
+    
+    const myOffers = await this.offerRepo.find({ where: { buyerEmail: email } });
+    const allCrops = await this.cropCycleRepo.find();
+
+    return myOffers.map(offer => {
+      const relatedCrop = allCrops.find(c => c.id === offer.cropId);
+      return {
+        ...offer,
+        cropType: relatedCrop ? relatedCrop.cropType : 'Unknown Crop',
+        farmerContact: relatedCrop ? relatedCrop.farmerId : 'Unknown Farmer',
+        location: relatedCrop ? relatedCrop.location : 'Unknown Location',
+      };
+    });
   }
 }
