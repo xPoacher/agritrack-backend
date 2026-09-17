@@ -4,6 +4,13 @@ import { Repository } from 'typeorm';
 import { CropCycle } from '../crop-cycle.entity';
 import { Offer } from './offer.entity';
 
+// Helper function to generate a 16-character WatermelonDB compatible ID
+// This avoids needing to install external packages like nanoid or uuid
+const generateWatermelonId = (): string => {
+  const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  return Array.from({ length: 16 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
+};
+
 @Controller('sync')
 export class SyncController {
   constructor(
@@ -126,6 +133,7 @@ export class SyncController {
     }
 
     const newOffer = this.offerRepo.create({
+      id: generateWatermelonId(), // FIX: Explicitly assign the 16-character ID
       cropId: body.cropId,
       buyerEmail: body.buyerEmail,
       companyName: body.companyName,
