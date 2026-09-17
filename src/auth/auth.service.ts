@@ -25,7 +25,8 @@ export class AuthService {
     });
   }
 
-  async register(email: string, pass: string) {
+  // Notice the addition of companyName here
+  async register(email: string, pass: string, companyName: string) {
     const existing = await this.buyerRepo.findOne({ where: { email } });
     if (existing) throw new BadRequestException('Email already registered');
 
@@ -35,7 +36,7 @@ export class AuthService {
     const buyer = this.buyerRepo.create({
       email,
       password: hashedPassword,
-      companyName: '', // Initialize companyName
+      companyName, // Save the company name to the database
       verificationCode,
     });
     await this.buyerRepo.save(buyer);
@@ -73,8 +74,11 @@ export class AuthService {
       throw new UnauthorizedException('Please verify your email first');
     }
 
-    // Embedding the buyer's email in the token ensures all future procurements are tied to them
+    // Embed the buyer's email and company name in the token payload
     const payload = { email: buyer.email, sub: buyer.id };
-    return { access_token: this.jwtService.sign(payload) };
+    return { 
+      access_token: this.jwtService.sign(payload),
+      companyName: buyer.companyName
+    };
   }
 }
