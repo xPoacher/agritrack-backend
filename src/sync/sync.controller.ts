@@ -14,10 +14,27 @@ export class SyncController {
   ) {}
   
   @Get('pull')
-  async pullChanges(@Query('lastPulledAt') lastPulledAt: string) {
-    // A simplified pull response for early prototyping
+  async pullChanges(@Query('lastPulledAt') lastPulledAt: string, @Query('farmerId') farmerId: string) {
+    let pendingOffers: Offer[] = [];
+    
+    // Fetch pending offers only if a farmerId is provided by the mobile app
+    if (farmerId) {
+      const farmerCrops = await this.cropCycleRepo.find({ where: { farmerId } });
+      const cropIds = farmerCrops.map(c => c.id);
+
+      if (cropIds.length > 0) {
+        pendingOffers = await this.offerRepo.createQueryBuilder("offer")
+          .where("offer.cropId IN (:...ids)", { ids: cropIds })
+          .andWhere("offer.status = :status", { status: 'Pending' })
+          .getMany();
+      }
+    }
+
     return {
-      changes: { crop_cycles: { created: [], updated: [], deleted: [] } },
+      changes: { 
+        crop_cycles: { created: [], updated: [], deleted: [] },
+        offers: { created: pendingOffers, updated: [], deleted: [] }
+      },
       timestamp: Date.now(),
     };
   }
@@ -28,8 +45,6 @@ export class SyncController {
     
     if (changes && changes.crop_cycles) {
       const { created } = changes.crop_cycles;
-      
-      // Loop through offline records and insert them into PostgreSQL
       for (const crop of created) {
         const newCrop = this.cropCycleRepo.create({
           id: crop.id,
@@ -44,38 +59,42 @@ export class SyncController {
         await this.cropCycleRepo.save(newCrop);
       }
     }
+
+    // Process status updates to offers (Accepted, Rejected, Counter) pushed from the mobile app
+    if (changes && changes.offers) {
+      const { updated } = changes.offers;
+      for (const updatedOffer of updated) {
+        await this.offerRepo.update(updatedOffer.id, {
+          status: updatedOffer.status,
+          offeredPricePerKg: updatedOffer.offered_price_per_kg 
+        });
+      }
+    }
+    
     return { success: true };
   }
 
   @Get('marketplace')
   async getMarketplaceFeed(@Headers('authorization') authHeader: string) {
-    // Enforce JWT token security for the buyer dashboard
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
       throw new UnauthorizedException('Missing or invalid authorization token');
     }
 
-    // 1. Fetch all records to process in memory
     const allCrops = await this.cropCycleRepo.find();
     const allOffers = await this.offerRepo.find();
     
-    // 2. Filter out empty/out-of-stock crops for the public feed
     const activeCrops = allCrops.filter(
       crop => (crop.quantityAvailable && crop.quantityAvailable > 0) || crop.harvestStatus === 'Planted'
     );
 
-    // 3. Inject farmer profile details, success metrics, and price metrics into the response
     const marketplaceFeed = activeCrops.map((crop) => {
-      
-      // Find all historical records for this specific farmer
       const allFarmerCrops = allCrops.filter(c => c.farmerId === crop.farmerId);
       
-      // Calculate success rate based on 'Harvested' status
       const successful = allFarmerCrops.filter(c => c.harvestStatus === 'Harvested').length;
       const successRate = allFarmerCrops.length > 0 
         ? Math.round((successful / allFarmerCrops.length) * 100) 
         : 100;
 
-      // Price Metrics: Find all offers for this specific crop type across the platform
       const typeOffers = allOffers.filter(o => {
         const linkedCrop = allCrops.find(c => c.id === o.cropId);
         return linkedCrop && linkedCrop.cropType === crop.cropType;
@@ -85,13 +104,12 @@ export class SyncController {
         ? Math.round(typeOffers.reduce((sum, o) => sum + Number(o.offeredPricePerKg), 0) / typeOffers.length)
         : null;
 
-      // Top offer for this specific batch
       const batchOffers = allOffers.filter(o => o.cropId === crop.id);
       const topBid = batchOffers.length > 0 ? Math.max(...batchOffers.map(o => Number(o.offeredPricePerKg))) : null;
 
       return {
         ...crop,
-        farmerName: crop.farmerId, // Using phone number as name until buyer/seller auth profiles are added
+        farmerName: crop.farmerId, 
         successRate: `${successRate}%`,
         marketAverage: avgPrice,
         topBid: topBid
@@ -101,7 +119,6 @@ export class SyncController {
     return marketplaceFeed;
   }
 
-  // New endpoint to handle the buyer's procurement offer
   @Post('offer')
   async submitOffer(@Body() body: any, @Headers('authorization') authHeader: string) {
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
