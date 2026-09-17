@@ -1,25 +1,26 @@
-import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn } from 'typeorm';
+import { Entity, Column, PrimaryColumn, CreateDateColumn } from 'typeorm';
 
-@Entity('procurement_offers')
+@Entity('offers') // Changed to match WatermelonDB schema
 export class Offer {
-  @PrimaryGeneratedColumn('uuid')
+  // Changed from UUID to accept WatermelonDB's 16-character string IDs
+  @PrimaryColumn({ type: 'varchar', length: 20 })
   id!: string;
 
-  @Column()
+  @Column({ name: 'crop_id' })
   cropId!: string;
 
-  @Column()
+  @Column({ name: 'buyer_email' })
   buyerEmail!: string;
   
-  @Column()
+  @Column({ name: 'company_name' })
   companyName!: string;
 
-  @Column('decimal')
+  @Column('decimal', { name: 'offered_price_per_kg' })
   offeredPricePerKg!: number;
 
-  @Column({ default: 'Pending' }) // Can be 'Pending', 'Accepted', 'Rejected'
+  @Column({ default: 'Pending' }) 
   status!: string;
 
-  @CreateDateColumn()
+  @CreateDateColumn({ name: 'created_at' })
   createdAt!: Date;
 }
