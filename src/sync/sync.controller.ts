@@ -9,7 +9,7 @@ export class SyncController {
     @InjectRepository(CropCycle)
     private cropCycleRepo: Repository<CropCycle>,
   ) {}
-
+  
   @Get('pull')
   async pullChanges(@Query('lastPulledAt') lastPulledAt: string) {
     // A simplified pull response for early prototyping
@@ -46,7 +46,33 @@ export class SyncController {
 
   @Get('marketplace')
   async getMarketplaceFeed() {
-    // Retrieves all records from the crop_cycle table
-    return this.cropCycleRepo.find();
+    // 1. Fetch all records to process in memory
+    const allCrops = await this.cropCycleRepo.find();
+    
+    // 2. Filter out empty/out-of-stock crops for the public feed
+    const activeCrops = allCrops.filter(
+      crop => (crop.quantityAvailable && crop.quantityAvailable > 0) || crop.harvestStatus === 'Planted'
+    );
+
+    // 3. Inject farmer profile details and success metrics into the response
+    const marketplaceFeed = activeCrops.map((crop) => {
+      
+      // Find all historical records for this specific farmer
+      const allFarmerCrops = allCrops.filter(c => c.farmerId === crop.farmerId);
+      
+      // Calculate success rate based on 'Harvested' status
+      const successful = allFarmerCrops.filter(c => c.harvestStatus === 'Harvested').length;
+      const successRate = allFarmerCrops.length > 0 
+        ? Math.round((successful / allFarmerCrops.length) * 100) 
+        : 100;
+
+      return {
+        ...crop,
+        farmerName: crop.farmerId, // Using phone number as name until buyer/seller auth profiles are added
+        successRate: `${successRate}%`
+      };
+    });
+
+    return marketplaceFeed;
   }
 }
