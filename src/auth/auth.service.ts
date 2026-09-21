@@ -40,12 +40,14 @@ export class AuthService {
 
     await this.buyerRepo.save(newBuyer);
     
-    // Wrapped in try/catch to prevent server crashes if the email fails
-    try {
-      await this.emailService.sendVerificationCode(email, code, false);
-    } catch (error) {
-      console.error("CRITICAL EMAIL ERROR (Registration):", error);
-    }
+    // Developer fallback: Logs the code to Render dashboard in case the email is blocked
+    console.log(`\n\n🎯 REGISTRATION CODE FOR ${email}: ${code}\n\n`);
+    
+    // Triggers the email sending via your .env configuration.
+    // Notice there is no 'await' here, which eliminates the frontend UI delay.
+    this.emailService.sendVerificationCode(email, code, false).catch(err => {
+      console.error("Email sending failed (Check Google App Passwords or Render Firewall):", err);
+    });
 
     return { message: 'Registration successful, verification code sent.' };
   }
@@ -80,15 +82,15 @@ export class AuthService {
     buyer.verificationCode = code;
     await this.buyerRepo.save(buyer);
 
-    // Wrapped in try/catch to prevent server crashes if the email fails
-    try {
-      await this.emailService.sendVerificationCode(email, code, true);
-    } catch (error) {
-      console.error("CRITICAL EMAIL ERROR (Login):", error);
-    }
+    // Developer fallback: Logs the code to Render dashboard
+    console.log(`\n\n🔑 LOGIN CODE FOR ${email}: ${code}\n\n`);
 
-    // Tell frontend to show the verify-login screen
-    return { message: 'Login credentials valid. Verification code sent to email.', requires2FA: true };
+    // Triggers the email sending via your .env configuration.
+    this.emailService.sendVerificationCode(email, code, true).catch(err => {
+      console.error("Email sending failed (Check Google App Passwords or Render Firewall):", err);
+    });
+
+    return { message: 'Login credentials valid. Verification code sent.', requires2FA: true };
   }
 
   // 4. Verify Login Code (Issues JWT Token)
