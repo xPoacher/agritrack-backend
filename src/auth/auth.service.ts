@@ -4,7 +4,7 @@ import { Repository } from 'typeorm';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import { Buyer } from './buyer.entity';
-import { EmailService } from './email.service'; // Adjust this path if your email service is in another folder
+import { EmailService } from './email.service';
 
 @Injectable()
 export class AuthService {
@@ -35,13 +35,17 @@ export class AuthService {
       password: hashedPassword,
       companyName,
       verificationCode: code,
-      isVerified: false, // Must verify email first
+      isVerified: false, 
     });
 
     await this.buyerRepo.save(newBuyer);
     
-    // Send registration code via email
-    await this.emailService.sendVerificationCode(email, code, false);
+    // Wrapped in try/catch to prevent server crashes if the email fails
+    try {
+      await this.emailService.sendVerificationCode(email, code, false);
+    } catch (error) {
+      console.error("CRITICAL EMAIL ERROR (Registration):", error);
+    }
 
     return { message: 'Registration successful, verification code sent.' };
   }
@@ -76,8 +80,12 @@ export class AuthService {
     buyer.verificationCode = code;
     await this.buyerRepo.save(buyer);
 
-    // Send login code via email
-    await this.emailService.sendVerificationCode(email, code, true);
+    // Wrapped in try/catch to prevent server crashes if the email fails
+    try {
+      await this.emailService.sendVerificationCode(email, code, true);
+    } catch (error) {
+      console.error("CRITICAL EMAIL ERROR (Login):", error);
+    }
 
     // Tell frontend to show the verify-login screen
     return { message: 'Login credentials valid. Verification code sent to email.', requires2FA: true };
