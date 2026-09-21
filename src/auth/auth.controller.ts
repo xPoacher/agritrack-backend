@@ -3,21 +3,27 @@ import { AuthService } from './auth.service';
 
 @Controller('auth')
 export class AuthController {
-  constructor(private authService: AuthService) {}
+  constructor(private readonly authService: AuthService) {}
 
   @Post('register')
-  async register(@Body() body: any) {
-    // Pass the companyName extracted from the frontend request body
+  register(@Body() body: any) {
     return this.authService.register(body.email, body.password, body.companyName);
   }
 
-  @Post('verify')
-  async verify(@Body() body: any) {
+  // FIX: Renamed endpoint to match the React frontend exactly
+  @Post('verify-registration')
+  verifyRegistration(@Body() body: { email: string; code: string }) {
     return this.authService.verify(body.email, body.code);
   }
 
   @Post('login')
-  async login(@Body() body: any) {
+  login(@Body() body: any) {
     return this.authService.login(body.email, body.password);
+  }
+
+  // FIX: Added the missing endpoint for the 2FA login verification
+  @Post('verify-login')
+  verifyLogin(@Body() body: { email: string; code: string }) {
+    return this.authService.verifyLogin(body.email, body.code);
   }
 }
