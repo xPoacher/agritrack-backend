@@ -1,90 +1,104 @@
 import { Injectable, UnauthorizedException, BadRequestException } from '@nestjs/common';
-import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { Buyer } from './buyer.entity';
+import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
-import * as nodemailer from 'nodemailer';
+import { Buyer } from './buyer.entity';
+import { EmailService } from './email.service'; // Adjust this path if your email service is in another folder
 
 @Injectable()
 export class AuthService {
-  private transporter;
-
   constructor(
     @InjectRepository(Buyer)
     private buyerRepo: Repository<Buyer>,
     private jwtService: JwtService,
-  ) {
-    this.transporter = nodemailer.createTransport({
-      service: 'gmail',
-      auth: {
-        user: 'agritrack.system.mail@gmail.com', 
-        pass: 'zqhrfqwsjlabdpiw',
-      },
-    });
+    private emailService: EmailService,
+  ) {}
+
+  // Helper function to generate a 6-digit code
+  private generateCode(): string {
+    return Math.floor(100000 + Math.random() * 900000).toString();
   }
 
+  // 1. Initial Registration
   async register(email: string, pass: string, companyName: string) {
-    const existing = await this.buyerRepo.findOne({ where: { email } });
-    if (existing) throw new BadRequestException('Email already registered');
+    const existingBuyer = await this.buyerRepo.findOne({ where: { email } });
+    if (existingBuyer) {
+      throw new BadRequestException('User with this email already exists');
+    }
 
     const hashedPassword = await bcrypt.hash(pass, 10);
-    const verificationCode = Math.floor(100000 + Math.random() * 900000).toString(); 
+    const code = this.generateCode();
 
-    const buyer = this.buyerRepo.create({
+    const newBuyer = this.buyerRepo.create({
       email,
       password: hashedPassword,
       companyName,
-      verificationCode,
+      verificationCode: code,
+      isVerified: false, // Must verify email first
     });
-    await this.buyerRepo.save(buyer);
 
-    // CRITICAL: Print code to Render logs so you can test without emails working
-    console.log(`\n\n======================================================`);
-    console.log(`=== VERIFICATION CODE FOR ${email}: ${verificationCode} ===`);
-    console.log(`======================================================\n\n`);
+    await this.buyerRepo.save(newBuyer);
+    
+    // Send registration code via email
+    await this.emailService.sendVerificationCode(email, code, false);
 
-    try {
-      await this.transporter.sendMail({
-        from: '"AgriTrack System" <noreply@agritrack.co.ke>',
-        to: email,
-        subject: 'Verify your AgriTrack Buyer Account',
-        text: `Your verification code is: ${verificationCode}`,
-      });
-    } catch (error) {
-      // Cast the unknown error to standard Error type to safely read the message
-      const emailError = error as Error;
-      console.error('Email failed to send (check Gmail App Password), but registration succeeded:', emailError.message);
-    }
-
-    return { message: 'Verification code generated successfully' };
+    return { message: 'Registration successful, verification code sent.' };
   }
 
+  // 2. Verify Registration Code
   async verify(email: string, code: string) {
     const buyer = await this.buyerRepo.findOne({ where: { email } });
-    if (!buyer || buyer.verificationCode !== code) {
-      throw new BadRequestException('Invalid verification code');
-    }
+    if (!buyer) throw new UnauthorizedException('User not found');
+    if (buyer.verificationCode !== code) throw new BadRequestException('Invalid verification code');
 
     buyer.isVerified = true;
-    buyer.verificationCode = ''; 
+    buyer.verificationCode = null; // Clear code after successful use
     await this.buyerRepo.save(buyer);
-    return { message: 'Account verified successfully' };
+
+    return { message: 'Account verified successfully. Please login.' };
   }
 
+  // 3. Initial Login (Checks password, sends new 2FA code)
   async login(email: string, pass: string) {
     const buyer = await this.buyerRepo.findOne({ where: { email } });
-    
-    if (!buyer || !(await bcrypt.compare(pass, buyer.password))) {
-      throw new UnauthorizedException('Invalid email or password');
-    }
+    if (!buyer) throw new UnauthorizedException('Invalid credentials');
+
+    const isMatch = await bcrypt.compare(pass, buyer.password);
+    if (!isMatch) throw new UnauthorizedException('Invalid credentials');
+
     if (!buyer.isVerified) {
-      throw new UnauthorizedException('Please verify your email first');
+      throw new UnauthorizedException('Account not verified. Please verify your email first.');
     }
 
+    // Generate new 2FA code specifically for this login session
+    const code = this.generateCode();
+    buyer.verificationCode = code;
+    await this.buyerRepo.save(buyer);
+
+    // Send login code via email
+    await this.emailService.sendVerificationCode(email, code, true);
+
+    // Tell frontend to show the verify-login screen
+    return { message: 'Login credentials valid. Verification code sent to email.', requires2FA: true };
+  }
+
+  // 4. Verify Login Code (Issues JWT Token)
+  async verifyLogin(email: string, code: string) {
+    const buyer = await this.buyerRepo.findOne({ where: { email } });
+    if (!buyer) throw new UnauthorizedException('User not found');
+    if (buyer.verificationCode !== code) throw new UnauthorizedException('Invalid login code');
+
+    // Clear code so it cannot be reused
+    buyer.verificationCode = null;
+    await this.buyerRepo.save(buyer);
+
+    // Issue JWT Token
     const payload = { email: buyer.email, sub: buyer.id };
+    const access_token = this.jwtService.sign(payload);
+
     return { 
-      access_token: this.jwtService.sign(payload),
+      access_token,
       companyName: buyer.companyName
     };
   }

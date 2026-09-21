@@ -14,8 +14,9 @@ export class Buyer {
   @Column()
   companyName!: string;
 
-  @Column({ nullable: true })
-  verificationCode!: string;
+  // FIX: Added '| null' so TypeScript allows us to clear the code after login
+  @Column({ type: 'varchar', nullable: true })
+  verificationCode!: string | null;
 
   @Column({ default: false })
   isVerified!: boolean;
