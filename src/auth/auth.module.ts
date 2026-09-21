@@ -4,6 +4,8 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
 import { Buyer } from './buyer.entity';
+// 1. Import the EmailService
+import { EmailService } from './email.service';
 
 @Module({
   imports: [
@@ -16,7 +18,8 @@ import { Buyer } from './buyer.entity';
       signOptions: { expiresIn: '8h' }, 
     }),
   ],
-  providers: [AuthService],
+  // 2. Add EmailService to the providers array
+  providers: [AuthService, EmailService],
   controllers: [AuthController],
 })
 export class AuthModule {}
